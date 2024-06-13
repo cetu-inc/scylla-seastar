@@ -109,7 +109,6 @@ fair_group::fair_group(config cfg, unsigned nr_queues)
                         std::max<capacity_t>(cfg.rate_factor * fixed_point_factor * token_bucket_t::rate_cast(cfg.rate_limit_duration).count(), tokens_capacity(cfg.limit_min_tokens)),
                         tokens_capacity(cfg.min_tokens)
                        )
-        , _per_tick_threshold(_token_bucket.limit() / nr_queues)
         , _balance(smp::count, max_balance)
 {
     if (cfg.rate_factor * fixed_point_factor > _token_bucket.max_rate) {
@@ -386,14 +385,13 @@ bool fair_queue::balanced() noexcept {
 }
 
 void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
-    capacity_t dispatched = 0;
     boost::container::small_vector<priority_class_ptr, 2> preempt;
 
     if (!balanced()) {
         return;
     }
 
-    while (!_handles.empty() && (dispatched < _group.per_tick_grab_threshold())) {
+    while (!_handles.empty()) {
         priority_class_data& h = *_handles.top();
         if (h._queue.empty() || !h._plugged) {
             pop_priority_class(h);
@@ -438,7 +436,6 @@ void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
         _total_accumulated += req_cost;
         h._accumulated += req_cost;
         h._pure_accumulated += req_cap;
-        dispatched += req_cap;
 
         cb(req);
 
