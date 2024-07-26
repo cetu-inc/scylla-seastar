@@ -407,6 +407,8 @@ public:
     /// Register a user-defined signal handler
     void handle_signal(int signo, noncopyable_function<void ()>&& handler);
     void wakeup();
+    /// @private
+    uint64_t polls() const noexcept { return _polls; }
 
 private:
     class signals {
