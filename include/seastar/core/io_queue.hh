@@ -122,7 +122,8 @@ private:
     uint64_t _prev_dispatched = 0;
     uint64_t _prev_completed = 0;
     double _flow_ratio = 1.0;
-    timer<lowres_clock> _flow_ratio_update;
+
+    timer<lowres_clock> _averaging_decay_timer;
 
     void update_flow_ratio() noexcept;
 
@@ -155,7 +156,7 @@ public:
         float rate_factor = 1.0;
         std::chrono::duration<double> rate_limit_duration = std::chrono::milliseconds(1);
         size_t block_count_limit_min = 1;
-        unsigned flow_ratio_ticks = 100;
+        unsigned averaging_decay_ticks = 100;
         double flow_ratio_ema_factor = 0.95;
         double flow_ratio_backpressure_threshold = 1.1;
     };
