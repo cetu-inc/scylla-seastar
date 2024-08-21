@@ -342,8 +342,8 @@ private:
     config _config;
     fair_group& _group;
     clock_type::time_point _group_replenish;
-    fair_queue_ticket _resources_executing;
-    fair_queue_ticket _resources_queued;
+    capacity_t _resources_executing = 0;
+    capacity_t _resources_queued =0 ;
     priority_queue _handles;
     std::vector<std::unique_ptr<priority_class_data>> _priority_classes;
     size_t _nr_classes = 0;
@@ -419,11 +419,15 @@ public:
 
     void update_shares_for_class(class_id c, uint32_t new_shares);
 
-    /// \return how much resources (weight, size) are currently queued for all classes.
-    fair_queue_ticket resources_currently_waiting() const;
+    /// \return how much resources are currently queued for all classes.
+    capacity_t resources_currently_waiting() const noexcept {
+        return _resources_queued;
+    }
 
     /// \return the amount of resources (weight, size) currently executing
-    fair_queue_ticket resources_currently_executing() const;
+    capacity_t resources_currently_executing() const noexcept {
+        return _resources_executing;
+    }
 
     capacity_t tokens_capacity(double tokens) const noexcept {
         return _group.tokens_capacity(tokens);
