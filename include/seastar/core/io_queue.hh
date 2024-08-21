@@ -118,6 +118,8 @@ private:
     uint64_t _requests_dispatched = 0;
     uint64_t _requests_completed = 0;
 
+    fair_queue::capacity_t _wait_warn_threshold;
+
     // Flow monitor
     uint64_t _prev_dispatched = 0;
     uint64_t _prev_completed = 0;
@@ -130,6 +132,8 @@ private:
 
     void update_flow_ratio() noexcept;
     void lower_stall_threshold() noexcept;
+    void lower_wait_warn_threshold() noexcept;
+    void log_nr_queued(std::string_view) noexcept;
 
     metrics::metric_groups _metric_groups;
 public:

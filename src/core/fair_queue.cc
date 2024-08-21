@@ -201,8 +201,8 @@ fair_queue::fair_queue(fair_queue&& other)
     : _config(std::move(other._config))
     , _group(other._group)
     , _group_replenish(std::move(other._group_replenish))
-    , _resources_executing(std::exchange(other._resources_executing, fair_queue_ticket{}))
-    , _resources_queued(std::exchange(other._resources_queued, fair_queue_ticket{}))
+    , _resources_executing(std::exchange(other._resources_executing, 0))
+    , _resources_queued(std::exchange(other._resources_queued, 0))
     , _handles(std::move(other._handles))
     , _priority_classes(std::move(other._priority_classes))
     , _last_accumulated(other._last_accumulated)
@@ -335,14 +335,6 @@ void fair_queue::update_shares_for_class(class_id id, uint32_t shares) {
     pc->update_shares(shares);
 }
 
-fair_queue_ticket fair_queue::resources_currently_waiting() const {
-    return _resources_queued;
-}
-
-fair_queue_ticket fair_queue::resources_currently_executing() const {
-    return _resources_executing;
-}
-
 void fair_queue::queue(class_id id, fair_queue_entry& ent) noexcept {
     priority_class_data& pc = *_priority_classes[id];
     // We need to return a future in this function on which the caller can wait.
@@ -352,12 +344,15 @@ void fair_queue::queue(class_id id, fair_queue_entry& ent) noexcept {
         push_priority_class_from_idle(pc);
     }
     pc._queue.push_back(ent);
+    _resources_queued += ent.capacity();
 }
 
 void fair_queue::notify_request_finished(fair_queue_entry::capacity_t cap) noexcept {
+    _resources_executing -= cap;
 }
 
 void fair_queue::notify_request_cancelled(fair_queue_entry& ent) noexcept {
+    _resources_queued -= ent._capacity;
     ent._capacity = 0;
 }
 
@@ -398,6 +393,7 @@ bool fair_queue::balanced() noexcept {
 
 void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
     boost::container::small_vector<priority_class_ptr, 2> preempt;
+    capacity_t dispatched = 0;
 
     if (!balanced()) {
         return;
@@ -445,6 +441,7 @@ void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
             }
             _last_accumulated = 0;
         }
+        dispatched += req_cap;
         _total_accumulated += req_cost;
         h._accumulated += req_cost;
         h._pure_accumulated += req_cap;
@@ -456,6 +453,8 @@ void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
         }
     }
 
+    _resources_queued -= dispatched;
+    _resources_executing += dispatched;
     for (auto&& h : preempt) {
         push_priority_class(*h);
     }

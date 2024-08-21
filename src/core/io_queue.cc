@@ -57,6 +57,7 @@ module seastar;
 namespace seastar {
 
 logger io_log("io");
+logger iow_log("iowarn");
 
 using namespace std::chrono_literals;
 using namespace internal::linux_abi;
@@ -209,6 +210,7 @@ public:
     }
 
     fair_queue::class_id fq_class() const noexcept { return _pc.id(); }
+    uint32_t nr_queued() const noexcept { return _nr_queued; }
 
     std::vector<seastar::metrics::impl::metric_definition_impl> metrics();
     metrics::metric_groups metric_groups;
@@ -559,11 +561,19 @@ void io_queue::lower_stall_threshold() noexcept {
     _stall_threshold = std::max(_stall_threshold_min, new_threshold);
 }
 
+void io_queue::lower_wait_warn_threshold() noexcept {
+    if (_streams[0].resources_currently_waiting() < (_wait_warn_threshold >> 2)) {
+        _wait_warn_threshold = std::max(_wait_warn_threshold >> 1, _streams[0].maximum_capacity());
+    }
+}
+
 void
 io_queue::complete_request(io_desc_read_write& desc, std::chrono::duration<double> delay) noexcept {
     _requests_executing--;
     _requests_completed++;
-    _streams[desc.stream()].notify_request_finished(desc.capacity());
+
+    auto& stream = _streams[desc.stream()];
+    stream.notify_request_finished(desc.capacity());
 
     if (delay > _stall_threshold) {
         _stall_threshold *= 2;
@@ -586,6 +596,7 @@ io_queue::io_queue(io_group_ptr group, internal::io_sink& sink)
     , _averaging_decay_timer([this] {
         update_flow_ratio();
         lower_stall_threshold();
+        lower_wait_warn_threshold();
     })
     , _stall_threshold_min(std::max(get_config().stall_threshold, 1ms))
     , _stall_threshold(_stall_threshold_min)
@@ -599,6 +610,8 @@ io_queue::io_queue(io_group_ptr group, internal::io_sink& sink)
     } else {
         _streams.emplace_back(*_group->_fgs[0], make_fair_queue_config(cfg, "rw"));
     }
+
+    _wait_warn_threshold = _streams[0].maximum_capacity();
     _averaging_decay_timer.arm_periodic(std::chrono::duration_cast<std::chrono::milliseconds>(_group->io_latency_goal() * cfg.averaging_decay_ticks));
 
     namespace sm = seastar::metrics;
@@ -973,12 +986,34 @@ future<size_t> io_queue::queue_one_request(internal::priority_class pc, io_direc
             queued_req->set_intent(cq);
         }
 
-        _streams[queued_req->stream()].queue(pclass.fq_class(), queued_req->queue_entry());
+        auto& stream = _streams[queued_req->stream()];
+        stream.queue(pclass.fq_class(), queued_req->queue_entry());
         queued_req.release();
         pclass.on_queue();
         _queued_requests++;
+        if (stream.resources_currently_waiting() > _wait_warn_threshold) {
+            _wait_warn_threshold <<= 1;
+            log_nr_queued("Queue");
+        }
         return fut;
     });
+}
+
+void io_queue::log_nr_queued(std::string_view reason) noexcept {
+    if (!iow_log.is_enabled(log_level::debug)) {
+        return;
+    }
+
+    std::ostringstream qlens;
+    for (auto&& pc_data : _priority_classes) {
+        if (pc_data) {
+            auto [ shares, name ] = get_class_info(pc_data->fq_class());
+            qlens << " " << name << "=" << pc_data->nr_queued();
+        }
+    }
+    iow_log.debug("[{}] queued {}/{}, tick capacity {}, threshold {}, classes {}",
+            reason, _queued_requests, _streams[0].resources_currently_waiting(),
+            _streams[0].maximum_capacity(), _wait_warn_threshold, qlens.str());
 }
 
 future<size_t> io_queue::queue_request(internal::priority_class pc, io_direction_and_length dnl, internal::io_request req, io_intent* intent, iovec_keeper iovs) noexcept {
