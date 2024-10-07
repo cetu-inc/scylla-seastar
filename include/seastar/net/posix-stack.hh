@@ -166,6 +166,10 @@ class posix_server_socket_impl : public server_socket_impl {
     server_socket::load_balancing_algorithm _lba;
     shard_id _fixed_cpu;
     std::pmr::polymorphic_allocator<char>* _allocator;
+
+    using conn_to_shard_t = std::unordered_map<net::inet_address, size_t>;
+    static thread_local conn_to_shard_t _conn_to_shard;
+    static thread_local size_t _next_cpu;
 public:
     explicit posix_server_socket_impl(int protocol, socket_address sa, pollable_fd lfd,
         server_socket::load_balancing_algorithm lba, shard_id fixed_cpu,

@@ -53,6 +53,8 @@ module seastar;
 #include <seastar/util/std-compat.hh>
 #endif
 
+static seastar::logger _logger("network");
+
 namespace std {
 
 template <>
@@ -111,6 +113,8 @@ public:
 
 thread_local posix_ap_server_socket_impl::sockets_map_t posix_ap_server_socket_impl::sockets{};
 thread_local posix_ap_server_socket_impl::conn_map_t posix_ap_server_socket_impl::conn_q{};
+thread_local posix_server_socket_impl::conn_to_shard_t posix_server_socket_impl::_conn_to_shard{};
+thread_local size_t posix_server_socket_impl::_next_cpu = 0;
 
 class posix_tcp_connected_socket_operations : public posix_connected_socket_operations {
 public:
@@ -506,6 +510,18 @@ posix_server_socket_impl::accept() {
                 return _conntrack.get_handle(ntoh(sa.as_posix_sockaddr_in().sin_port) % smp::count);
             case server_socket::load_balancing_algorithm::fixed:
                 return _conntrack.get_handle(_fixed_cpu);
+            case server_socket::load_balancing_algorithm::src_ip: {
+                auto iter = _conn_to_shard.find(sa.addr());
+
+                if (iter == _conn_to_shard.end()) {
+		            _logger.debug("new sa {}", sa.addr());
+                    iter = _conn_to_shard.emplace(sa.addr(), _next_cpu++ % smp::count).first;
+                }
+
+		        _logger.debug("assigned {} sa {}", iter->second, sa.addr());
+
+                return _conntrack.get_handle(iter->second);
+            }
             default: abort();
             }
         } ();

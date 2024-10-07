@@ -328,6 +328,7 @@ public:
         // src port number accordingly.
         port,
         // This algorithm distributes all new connections to listen_options::fixed_cpu shard only.
+        src_ip,
         fixed,
         default_ = connection_distribution
     };
