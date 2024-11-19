@@ -123,10 +123,6 @@ auto fair_group::grab_capacity(capacity_t cap) noexcept -> capacity_t {
     return _token_bucket.grab(cap);
 }
 
-void fair_group::release_capacity(capacity_t cap) noexcept {
-    _token_bucket.release(cap);
-}
-
 void fair_group::replenish_capacity(clock_type::time_point now) noexcept {
     _token_bucket.replenish(now);
 }
@@ -219,14 +215,15 @@ void fair_queue::push_priority_class_from_idle(priority_class_data& pc) noexcept
     }
 }
 
+// ATTN: This can only be called on pc that is from _handles.top()
 void fair_queue::pop_priority_class(priority_class_data& pc) noexcept {
-    assert(pc._plugged && pc._queued);
+    assert(pc._queued);
     pc._queued = false;
     _handles.pop();
 }
 
 void fair_queue::plug_priority_class(priority_class_data& pc) noexcept {
-    assert(!pc._plugged && !pc._queued);
+    assert(!pc._plugged);
     pc._plugged = true;
     if (!pc._queue.empty()) {
         push_priority_class_from_idle(pc);
@@ -239,9 +236,6 @@ void fair_queue::plug_class(class_id cid) noexcept {
 
 void fair_queue::unplug_priority_class(priority_class_data& pc) noexcept {
     assert(pc._plugged);
-    if (pc._queued) {
-        pop_priority_class(pc);
-    }
     pc._plugged = false;
 }
 
@@ -259,10 +253,6 @@ auto fair_queue::grab_pending_capacity(const fair_queue_entry& ent) noexcept -> 
     capacity_t cap = ent._capacity;
     if (cap > _pending->cap) {
         return grab_result::cant_preempt;
-    }
-
-    if (cap < _pending->cap) {
-        _group.release_capacity(_pending->cap - cap); // FIXME -- replenish right at once?
     }
 
     _pending.reset();
@@ -330,7 +320,6 @@ void fair_queue::queue(class_id id, fair_queue_entry& ent) noexcept {
 }
 
 void fair_queue::notify_request_finished(fair_queue_entry::capacity_t cap) noexcept {
-    _group.release_capacity(cap);
 }
 
 void fair_queue::notify_request_cancelled(fair_queue_entry& ent) noexcept {
@@ -363,7 +352,7 @@ void fair_queue::dispatch_requests(std::function<void(fair_queue_entry&)> cb) {
 
     while (!_handles.empty() && (dispatched < _group.per_tick_grab_threshold())) {
         priority_class_data& h = *_handles.top();
-        if (h._queue.empty()) {
+        if (h._queue.empty() || !h._plugged) {
             pop_priority_class(h);
             continue;
         }
